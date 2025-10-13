@@ -1,0 +1,56 @@
+name: tailor_book
+description: "A professional tailor management app for managing customers and their orders."
+
+# Prevent accidental publishing
+publish_to: "none"
+
+# App version - updated to 1.1.0
+version: 1.1.0+2
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Icons
+  cupertino_icons: ^1.0.8
+  flutter_staggered_grid_view: ^0.7.0
+
+  # State Management
+  flutter_bloc: ^8.1.6
+  bloc: ^8.1.4
+
+  # Database & Storage
+  sqflite: ^2.4.1
+  path: ^1.9.1
+  path_provider: ^2.1.5
+
+  # Image Handling
+  image_picker: ^1.1.2
+
+  # Permissions & Contacts
+  permission_handler: ^11.3.1
+  flutter_contacts: ^1.1.9+2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Uncomment and add your assets here when needed
+  # assets:
+  #   - images/
+  #   - icons/
+
+  # Uncomment and add custom fonts here when needed
+  # fonts:
+  #   - family: CustomFont
+  #     fonts:
+  #       - asset: fonts/CustomFont-Regular.ttf
+  #       - asset: fonts/CustomFont-Bold.ttf
+  #         weight: 700
