@@ -1,5 +1,10 @@
-import 'package:sqflite/sqflite.dart';
+// lib/database/database_helper.dart
+//
+// Changes from original:
+//  - Added getCustomerByMobile() — required by BackupService import logic
+
 import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
@@ -73,7 +78,7 @@ class DatabaseHelper {
       WHERE c.name LIKE ? OR c.mobile_number LIKE ?
       GROUP BY c.id
       ORDER BY c.created_at DESC
-    ''',
+      ''',
       ['%$query%', '%$query%'],
     );
   }
@@ -100,6 +105,18 @@ class DatabaseHelper {
       'customers',
       where: 'id = ?',
       whereArgs: [id],
+    );
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  /// NEW — used by BackupService to check if a customer exists before import.
+  Future<Map<String, dynamic>?> getCustomerByMobile(String mobile) async {
+    final db = await database;
+    final result = await db.query(
+      'customers',
+      where: 'mobile_number = ?',
+      whereArgs: [mobile],
+      limit: 1,
     );
     return result.isNotEmpty ? result.first : null;
   }

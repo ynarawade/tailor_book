@@ -1,6 +1,15 @@
+// lib/screens/home_screen.dart
+//
+// Changes from original:
+//  - Fixed initState: super.initState() called first
+//  - Removed double LoadCustomers() call (bloc already calls it after AddCustomer)
+//  - Added backup icon → navigates to BackupScreen
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:tailor_book/screens/backup_screen.dart';
 import 'package:tailor_book/screens/customer_details_screen.dart';
+
 import '../bloc/customer_bloc.dart';
 import '../bloc/customer_event.dart';
 import '../bloc/customer_state.dart';
@@ -16,10 +25,13 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
+
   @override
   void initState() {
+    super.initState(); // ✅ Fixed: super first
+    // LoadCustomers is already fired by BlocProvider in main.dart,
+    // but we keep it here as a safety net in case the screen is re-mounted.
     context.read<CustomerBloc>().add(LoadCustomers());
-    super.initState();
   }
 
   @override
@@ -33,6 +45,18 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('TailorBook'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_backup_restore),
+            tooltip: 'Backup & Restore',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const BackupScreen()),
+              );
+            },
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(60),
           child: Padding(
@@ -120,13 +144,12 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
-          final result = await Navigator.push(
+          await Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => AddCustomerScreen()),
           );
-          if (result == true) {
-            context.read<CustomerBloc>().add(LoadCustomers());
-          }
+          // ✅ Fixed: no manual LoadCustomers() here — the bloc already
+          // calls add(LoadCustomers()) internally after AddCustomer succeeds.
         },
         child: const Icon(Icons.add),
       ),
@@ -145,7 +168,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         },
-
         contentPadding: const EdgeInsets.all(16),
         leading: CircleAvatar(
           backgroundColor: Colors.deepPurple,
@@ -170,7 +192,9 @@ class _HomeScreenState extends State<HomeScreen> {
             Text('📸 ${customer.imageCount} images'),
             const SizedBox(height: 4),
             Text(
-              'Created: ${DateTime.parse(customer.createdAt).day}/${DateTime.parse(customer.createdAt).month}/${DateTime.parse(customer.createdAt).year}',
+              'Created: ${DateTime.parse(customer.createdAt).day}/'
+              '${DateTime.parse(customer.createdAt).month}/'
+              '${DateTime.parse(customer.createdAt).year}',
               style: TextStyle(color: Colors.grey[400], fontSize: 12),
             ),
           ],
