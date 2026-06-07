@@ -6,7 +6,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,7 +13,7 @@ import '../database/database_helper.dart';
 
 const _kBackupVersion = 1;
 const _kLastBackupKey = 'last_backup_date';
-const _kBackupExtension = 'tailorbackup';
+const _kBackupExtension = 'zip';
 
 /// Result wrapper so UI can show success / error without try-catching everywhere.
 class BackupResult {
@@ -50,36 +49,47 @@ class BackupService {
 
   Future<BackupResult> exportBackup() async {
     try {
-      // 1. Build JSON payload
       final jsonBytes = await _buildBackupJson();
-
-      // 2. Collect all image files
       final imageEntries = await _collectImageEntries();
 
-      // 3. Zip everything into memory
       final zipBytes = await compute(
         _buildZip,
         _ZipInput(jsonBytes: jsonBytes, imageEntries: imageEntries),
       );
 
-      // 4. Write zip to a temp file first (needed for share sheet on iOS)
-      final tempDir = await getTemporaryDirectory();
       final fileName =
-          'tailor_backup_${_formatDateForFile(DateTime.now())}.$_kBackupExtension';
+          'tailor_backup_${_formatDateForFile(DateTime.now())}.zip';
+
+      // Android
+      if (Platform.isAndroid) {
+        final outputFile = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Backup',
+          fileName: fileName,
+          bytes: zipBytes,
+        );
+
+        if (outputFile == null) {
+          return const BackupResult.err('Backup cancelled.');
+        }
+
+        await _saveLastBackupDate();
+
+        return const BackupResult.ok('Backup saved successfully.');
+      }
+
+      // iOS
+      final tempDir = await getTemporaryDirectory();
       final tempFile = File(path.join(tempDir.path, fileName));
+
       await tempFile.writeAsBytes(zipBytes);
 
-      // 5. Platform-specific delivery
-      if (Platform.isAndroid) {
-        return await _saveToDownloadsAndroid(tempFile, fileName);
-      } else {
-        // iOS – share sheet so user can pick Files / iCloud / Drive
-        await SharePlus.instance.share(
-          ShareParams(files: [XFile(tempFile.path)], text: 'TailorBook Backup'),
-        );
-        await _saveLastBackupDate();
-        return const BackupResult.ok('Backup shared successfully!');
-      }
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(tempFile.path)], text: 'TailorBook Backup'),
+      );
+
+      await _saveLastBackupDate();
+
+      return const BackupResult.ok('Backup shared successfully.');
     } catch (e) {
       return BackupResult.err('Export failed: ${e.toString()}');
     }
@@ -145,44 +155,44 @@ class BackupService {
     return entries;
   }
 
-  Future<BackupResult> _saveToDownloadsAndroid(
-    File tempFile,
-    String fileName,
-  ) async {
-    // Android 10 and below need WRITE_EXTERNAL_STORAGE
-    if (await _needsStoragePermission()) {
-      final status = await Permission.storage.request();
-      if (!status.isGranted) {
-        return const BackupResult.err(
-          'Storage permission denied. Cannot save to Downloads.',
-        );
-      }
-    }
+  // Future<BackupResult> _saveToDownloadsAndroid(
+  //   File tempFile,
+  //   String fileName,
+  // ) async {
+  //   // Android 10 and below need WRITE_EXTERNAL_STORAGE
+  //   if (await _needsStoragePermission()) {
+  //     final status = await Permission.storage.request();
+  //     if (!status.isGranted) {
+  //       return const BackupResult.err(
+  //         'Storage permission denied. Cannot save to Downloads.',
+  //       );
+  //     }
+  //   }
 
-    final downloadsPath = '/storage/emulated/0/Download/$fileName';
-    await tempFile.copy(downloadsPath);
-    await _saveLastBackupDate();
-    return BackupResult.ok('Backup saved to Downloads/$fileName');
-  }
+  //   final downloadsPath = '/storage/emulated/0/Download/$fileName';
+  //   await tempFile.copy(downloadsPath);
+  //   await _saveLastBackupDate();
+  //   return BackupResult.ok('Backup saved to Downloads/$fileName');
+  // }
 
-  Future<bool> _needsStoragePermission() async {
-    // Android 11+ (API 30+) doesn't need WRITE_EXTERNAL_STORAGE for Downloads
-    // We check via permission_handler; if status is not applicable, skip.
-    final status = await Permission.storage.status;
-    return status != PermissionStatus.permanentlyDenied &&
-        !Platform.isIOS &&
-        (await _androidSdkVersion()) <= 29;
-  }
+  // Future<bool> _needsStoragePermission() async {
+  //   // Android 11+ (API 30+) doesn't need WRITE_EXTERNAL_STORAGE for Downloads
+  //   // We check via permission_handler; if status is not applicable, skip.
+  //   final status = await Permission.storage.status;
+  //   return status != PermissionStatus.permanentlyDenied &&
+  //       !Platform.isIOS &&
+  //       (await _androidSdkVersion()) <= 29;
+  // }
 
-  Future<int> _androidSdkVersion() async {
-    // Defaults to a high number (safe) if we can't determine
-    try {
-      final result = await Process.run('getprop', ['ro.build.version.sdk']);
-      return int.tryParse(result.stdout.toString().trim()) ?? 30;
-    } catch (_) {
-      return 30;
-    }
-  }
+  // Future<int> _androidSdkVersion() async {
+  //   // Defaults to a high number (safe) if we can't determine
+  //   try {
+  //     final result = await Process.run('getprop', ['ro.build.version.sdk']);
+  //     return int.tryParse(result.stdout.toString().trim()) ?? 30;
+  //   } catch (_) {
+  //     return 30;
+  //   }
+  // }
 
   // ─────────────────────────────────────────────
   //  IMPORT
@@ -193,28 +203,13 @@ class BackupService {
 
   Future<BackupResult> importBackup() async {
     try {
-      FilePickerResult? result;
-
-      if (Platform.isIOS) {
-        // On iOS, FileType.custom with unknown UTTypes silently blocks selection.
-        // FileType.any shows all files — we validate the extension ourselves.
-        result = await FilePicker.platform.pickFiles(
-          type: FileType.any,
-          allowMultiple: false,
-          withData: false,
-          withReadStream: false,
-          dialogTitle: 'Select a .tailorbackup file',
-        );
-      } else {
-        // Android handles custom extensions fine
-        result = await FilePicker.platform.pickFiles(
-          type: FileType.custom,
-          allowedExtensions: [_kBackupExtension],
-          allowMultiple: false,
-          withData: false,
-          withReadStream: false,
-        );
-      }
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowMultiple: false,
+        withData: false,
+        withReadStream: false,
+        dialogTitle: 'Select a .zip file',
+      );
 
       if (result == null || result.files.single.path == null) {
         return const BackupResult.err('No file selected.');
@@ -352,7 +347,7 @@ class BackupService {
       archive.addFile(ArchiveFile(entry.zipPath, bytes.length, bytes));
     }
 
-    return Uint8List.fromList(encoder.encode(archive)!);
+    return Uint8List.fromList(encoder.encode(archive));
   }
 
   static Map<String, Uint8List> _extractZip(Uint8List zipBytes) {

@@ -1,38 +1,29 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:tailor_book/bloc/customer_event.dart';
-import 'package:tailor_book/screens/home_screen.dart';
+
 import 'bloc/customer_bloc.dart';
+import 'bloc/customer_event.dart';
+import 'core/theme/app_theme.dart';
+import 'screens/main_shell.dart';
 
 void main() {
-  runApp(MyApp());
+  runApp(const TailorBookApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class TailorBookApp extends StatelessWidget {
+  const TailorBookApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MultiBlocProvider(
       providers: [
-        BlocProvider(create: (context) => CustomerBloc()..add(LoadCustomers())),
+        BlocProvider(create: (_) => CustomerBloc()..add(LoadCustomers())),
       ],
       child: MaterialApp(
         title: 'TailorBook',
-        theme: ThemeData.dark().copyWith(
-          // primarySwatch: Colors.blue,
-          primaryColor: Colors.deepPurple,
-          scaffoldBackgroundColor: const Color(0xFF121212),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFF1E1E1E),
-            elevation: 0,
-          ),
-          cardTheme: const CardThemeData(
-            color: Color(0xFF1E1E1E),
-            elevation: 4,
-          ),
-        ),
-        home: HomeScreen(),
+        theme: AppTheme.dark,
+        home: const MainShell(),
         debugShowCheckedModeBanner: false,
       ),
     );

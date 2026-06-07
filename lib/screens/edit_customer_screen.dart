@@ -1,20 +1,29 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:tailor_book/database/database_helper.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
+import 'package:tailor_book/core/theme/app_txt_styles.dart';
+import 'package:tailor_book/widgets/tb_button.dart';
+import 'package:tailor_book/widgets/tb_card.dart';
+import 'package:tailor_book/widgets/tb_img_grid.dart';
+import 'package:tailor_book/widgets/tb_input_field.dart';
+import 'package:tailor_book/widgets/tb_msc_widget.dart';
+
+import '../core/theme/app_colors.dart';
+import '../database/database_helper.dart';
 import '../models/customer.dart';
 
 class EditCustomerScreen extends StatefulWidget {
-  final Customer customer;
-  final List<CustomerImage> images;
-
   const EditCustomerScreen({
     super.key,
     required this.customer,
     required this.images,
   });
+
+  final Customer customer;
+  final List<CustomerImage> images;
 
   @override
   State<EditCustomerScreen> createState() => _EditCustomerScreenState();
@@ -22,426 +31,278 @@ class EditCustomerScreen extends StatefulWidget {
 
 class _EditCustomerScreenState extends State<EditCustomerScreen> {
   final _formKey = GlobalKey<FormState>();
-  late TextEditingController _nameController;
-  late TextEditingController _mobileController;
-  List<CustomerImage> currentImages = [];
-  List<XFile> newImages = [];
-  final ImagePicker _picker = ImagePicker();
-  bool _isLoading = false;
+  late TextEditingController _nameCtrl;
+  late TextEditingController _mobileCtrl;
+  late List<CustomerImage> _existing;
+  final List<XFile> _new = [];
+  final _picker = ImagePicker();
+  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.customer.name);
-    _mobileController = TextEditingController(
-      text: widget.customer.mobileNumber,
-    );
-    currentImages = List.from(widget.images);
+    _nameCtrl = TextEditingController(text: widget.customer.name);
+    _mobileCtrl = TextEditingController(text: widget.customer.mobileNumber);
+    _existing = List.from(widget.images);
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _mobileController.dispose();
+    _nameCtrl.dispose();
+    _mobileCtrl.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Edit Customer'),
-        actions: [
-          TextButton(
-            onPressed: _isLoading ? null : _saveChanges,
-            child: _isLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Save', style: TextStyle(color: Colors.blue)),
-          ),
-        ],
-      ),
-      body: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Customer Info Card
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Customer Information',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _nameController,
-                        decoration: const InputDecoration(
-                          labelText: 'Customer Name',
-                          prefixIcon: Icon(Icons.person),
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Please enter customer name';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _mobileController,
-                        keyboardType: TextInputType.phone,
-                        decoration: const InputDecoration(
-                          labelText: 'Mobile Number',
-                          prefixIcon: Icon(Icons.phone),
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Please enter mobile number';
-                          }
-                          if (value.length < 10) {
-                            return 'Mobile number must be at least 10 digits';
-                          }
-                          return null;
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Images Section
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.photo_camera),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Images (${currentImages.length + newImages.length})',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Add Image Buttons
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: _pickImageFromCamera,
-                              icon: const Icon(Icons.camera_alt),
-                              label: const Text('Camera'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: _pickImageFromGallery,
-                              icon: const Icon(Icons.photo_library),
-                              label: const Text('Gallery'),
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Current Images Grid
-                      if (currentImages.isNotEmpty || newImages.isNotEmpty) ...[
-                        const Text(
-                          'Current Images:',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 8),
-                        GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 3,
-                                crossAxisSpacing: 8,
-                                mainAxisSpacing: 8,
-                                childAspectRatio: 1,
-                              ),
-                          itemCount: currentImages.length + newImages.length,
-                          itemBuilder: (context, index) {
-                            if (index < currentImages.length) {
-                              // Existing image
-                              final image = currentImages[index];
-                              return Stack(
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Image.file(
-                                      File(image.imagePath),
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                    ),
-                                  ),
-                                  Positioned(
-                                    top: 4,
-                                    right: 4,
-                                    child: GestureDetector(
-                                      onTap: () => _removeExistingImage(index),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(4),
-                                        decoration: const BoxDecoration(
-                                          color: Colors.red,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                          Icons.close,
-                                          color: Colors.white,
-                                          size: 16,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            } else {
-                              // New image
-                              final newImageIndex =
-                                  index - currentImages.length;
-                              final image = newImages[newImageIndex];
-                              return Stack(
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Image.file(
-                                      File(image.path),
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                    ),
-                                  ),
-                                  Positioned(
-                                    top: 4,
-                                    right: 4,
-                                    child: GestureDetector(
-                                      onTap: () =>
-                                          _removeNewImage(newImageIndex),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(4),
-                                        decoration: const BoxDecoration(
-                                          color: Colors.red,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                          Icons.close,
-                                          color: Colors.white,
-                                          size: 16,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  // New badge
-                                  Positioned(
-                                    top: 4,
-                                    left: 4,
-                                    child: Container(
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green,
-                                        borderRadius: BorderRadius.all(
-                                          Radius.circular(12),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        'NEW',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            }
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  Future<void> _pickCamera() async {
+    final img = await _picker.pickImage(source: ImageSource.camera);
+    if (img != null) setState(() => _new.add(img));
   }
 
-  Future<void> _pickImageFromCamera() async {
-    try {
-      final XFile? image = await _picker.pickImage(source: ImageSource.camera);
-      if (image != null) {
-        setState(() {
-          newImages.add(image);
-        });
-      }
-    } catch (e) {
-      _showErrorSnackBar('Failed to pick image: ${e.toString()}');
-    }
+  Future<void> _pickGallery() async {
+    final imgs = await _picker.pickMultiImage();
+    if (imgs.isNotEmpty) setState(() => _new.addAll(imgs));
   }
 
-  Future<void> _pickImageFromGallery() async {
-    try {
-      final List<XFile> images = await _picker.pickMultiImage();
-      setState(() {
-        newImages.addAll(images);
-      });
-    } catch (e) {
-      _showErrorSnackBar('Failed to pick images: ${e.toString()}');
-    }
-  }
-
-  void _removeExistingImage(int index) {
+  void _removeExisting(int index) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Image'),
-        content: const Text('Are you sure you want to delete this image?'),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Photo'),
+        content: const Text('Remove this photo permanently?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () {
-              setState(() {
-                currentImages.removeAt(index);
-              });
-              Navigator.pop(context);
+              setState(() => _existing.removeAt(index));
+              Navigator.pop(ctx);
             },
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            child: const Text('Delete'),
           ),
         ],
       ),
     );
   }
 
-  void _removeNewImage(int index) {
-    setState(() {
-      newImages.removeAt(index);
-    });
-  }
-
-  Future<void> _saveChanges() async {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _loading = true);
 
     try {
       final db = DatabaseHelper();
 
       // Update customer info
       await db.updateCustomer(widget.customer.id!, {
-        'name': _nameController.text.trim(),
-        'mobile_number': _mobileController.text.trim(),
+        'name': _nameCtrl.text.trim(),
+        'mobile_number': _mobileCtrl.text.trim(),
       });
 
-      // Delete removed images from database and file system
-      final originalImageIds = widget.images.map((e) => e.id!).toSet();
-      final currentImageIds = currentImages.map((e) => e.id!).toSet();
-      final deletedImageIds = originalImageIds.difference(currentImageIds);
-
-      for (final imageId in deletedImageIds) {
-        final imageData = widget.images.firstWhere((e) => e.id == imageId);
-        await db.deleteImage(imageId);
-        final file = File(imageData.imagePath);
-        if (await file.exists()) {
-          await file.delete();
-        }
+      // Delete removed images
+      final originalIds = widget.images.map((e) => e.id!).toSet();
+      final currentIds = _existing.map((e) => e.id!).toSet();
+      for (final id in originalIds.difference(currentIds)) {
+        final img = widget.images.firstWhere((e) => e.id == id);
+        await db.deleteImage(id);
+        final f = File(img.imagePath);
+        if (await f.exists()) await f.delete();
       }
 
       // Save new images
-      if (newImages.isNotEmpty) {
-        final directory = await getApplicationDocumentsDirectory();
+      if (_new.isNotEmpty) {
+        final dir = await getApplicationDocumentsDirectory();
         final customerDir = Directory(
-          '${directory.path}/customer_images/customer_${widget.customer.id}',
+          p.join(dir.path, 'customer_images', 'customer_${widget.customer.id}'),
         );
         if (!await customerDir.exists()) {
           await customerDir.create(recursive: true);
         }
-
-        for (int i = 0; i < newImages.length; i++) {
-          final originalFile = File(newImages[i].path);
-          final fileName =
-              'image_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
-          final newPath = path.join(customerDir.path, fileName);
-
-          await originalFile.copy(newPath);
-
+        for (int i = 0; i < _new.length; i++) {
+          final name = 'image_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+          final dest = p.join(customerDir.path, name);
+          await File(_new[i].path).copy(dest);
           await db.insertImage({
             'customer_id': widget.customer.id,
-            'image_path': newPath,
+            'image_path': dest,
             'image_type': 'general',
             'created_at': DateTime.now().toIso8601String(),
           });
         }
       }
 
-      _showSuccessSnackBar('Customer updated successfully!');
-      Navigator.pop(context, true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Client updated successfully')),
+        );
+        Navigator.pop(context, true);
+      }
     } catch (e) {
-      _showErrorSnackBar('Failed to update customer: ${e.toString()}');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _showSuccessSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
+  @override
+  Widget build(BuildContext context) {
+    final totalImages = _existing.length + _new.length;
 
-  void _showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Edit Client',
+          style: AppTextStyles.headlineSm(color: AppColors.primary),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, size: 18),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          _loading
+              ? const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primaryAccent,
+                    ),
+                  ),
+                )
+              : TextButton(
+                  onPressed: _save,
+                  child: Text(
+                    'Save',
+                    style: AppTextStyles.bodyMd(
+                      color: AppColors.primaryAccent,
+                    ).copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+        ],
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
+          children: [
+            // ── Personal details ─────────────────────────────────────────────
+            const TbSectionHeader('Personal Details'),
+            const SizedBox(height: 10),
+            TbCard(
+              child: Column(
+                children: [
+                  TbInputField(
+                    label: 'Full Name',
+                    controller: _nameCtrl,
+                    prefixIcon: Icons.person_outline,
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Name is required'
+                        : null,
+                  ),
+                  const SizedBox(height: 14),
+                  TbInputField(
+                    label: 'Phone Number',
+                    controller: _mobileCtrl,
+                    keyboardType: TextInputType.phone,
+                    prefixIcon: Icons.phone_outlined,
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) {
+                        return 'Phone is required';
+                      }
+                      if (v.replaceAll(RegExp(r'\D'), '').length < 10) {
+                        return 'Enter at least 10 digits';
+                      }
+                      return null;
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // ── Photos ───────────────────────────────────────────────────────
+            TbSectionHeader(
+              'Reference Photos',
+              trailing: Text(
+                '$totalImages',
+                style: AppTextStyles.labelMd(color: AppColors.primaryAccent),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TbCard(
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _pickCamera,
+                          icon: const Icon(Icons.camera_alt_outlined, size: 16),
+                          label: const Text('Camera'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primaryAccent,
+                            side: const BorderSide(
+                              color: AppColors.outlineVariant,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _pickGallery,
+                          icon: const Icon(
+                            Icons.photo_library_outlined,
+                            size: 16,
+                          ),
+                          label: const Text('Gallery'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primaryAccent,
+                            side: const BorderSide(
+                              color: AppColors.outlineVariant,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (totalImages > 0) ...[
+                    const SizedBox(height: 16),
+                    TbImageGrid(
+                      existingPaths: _existing.map((e) => e.imagePath).toList(),
+                      newPaths: _new.map((x) => x.path).toList(),
+                      onRemoveExisting: _removeExisting,
+                      onRemoveNew: (i) => setState(() => _new.removeAt(i)),
+                      onAddTap: _pickGallery,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 32),
+            TbButton(
+              label: 'Save Changes',
+              onPressed: _save,
+              isLoading: _loading,
+              icon: Icons.check_rounded,
+            ),
+          ],
+        ),
       ),
     );
   }

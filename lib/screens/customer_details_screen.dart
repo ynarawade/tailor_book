@@ -1,205 +1,324 @@
+// lib/screens/customer_details_screen.dart
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:tailor_book/database/database_helper.dart';
-import '../models/customer.dart';
+import 'package:tailor_book/core/theme/app_txt_styles.dart';
+import 'package:tailor_book/widgets/tb_avatar.dart';
+import 'package:tailor_book/widgets/tb_card.dart';
+import 'package:tailor_book/widgets/tb_msc_widget.dart';
+
 import '../bloc/customer_bloc.dart';
 import '../bloc/customer_event.dart';
+import '../core/theme/app_colors.dart';
+import '../database/database_helper.dart';
+import '../models/customer.dart';
 import 'edit_customer_screen.dart';
 
 class CustomerDetailsScreen extends StatefulWidget {
-  final Customer customer;
   const CustomerDetailsScreen({super.key, required this.customer});
+  final Customer customer;
 
   @override
   State<CustomerDetailsScreen> createState() => _CustomerDetailsScreenState();
 }
 
 class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
-  List<CustomerImage> images = [];
-  bool loading = true;
-  Customer? updatedCustomer;
+  List<CustomerImage> _images = [];
+  bool _loading = true;
+  late Customer _customer;
 
   @override
   void initState() {
     super.initState();
-    updatedCustomer = widget.customer;
+    _customer = widget.customer;
     _loadImages();
   }
 
-  void _loadImages() async {
+  Future<void> _loadImages() async {
     final db = DatabaseHelper();
-    final imagesData = await db.getCustomerImages(widget.customer.id!);
-    setState(() {
-      images = imagesData.map((e) => CustomerImage.fromMap(e)).toList();
-      loading = false;
-    });
-  }
-
-  void _refreshCustomerData() async {
-    final db = DatabaseHelper();
-    final customerData = await db.getCustomer(widget.customer.id!);
-    if (customerData != null) {
+    final raw = await db.getCustomerImages(_customer.id!);
+    if (mounted) {
       setState(() {
-        updatedCustomer = Customer.fromMap(customerData);
+        _images = raw.map((e) => CustomerImage.fromMap(e)).toList();
+        _loading = false;
       });
     }
-    _loadImages();
+  }
+
+  Future<void> _refresh() async {
+    final db = DatabaseHelper();
+    final raw = await db.getCustomer(_customer.id!);
+    if (raw != null && mounted) {
+      setState(() => _customer = Customer.fromMap(raw));
+    }
+    await _loadImages();
+    if (mounted) context.read<CustomerBloc>().add(LoadCustomers());
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(updatedCustomer!.name),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit),
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => EditCustomerScreen(
-                    customer: updatedCustomer!,
-                    images: images,
-                  ),
-                ),
-              );
-              if (result == true) {
-                _refreshCustomerData();
-                context.read<CustomerBloc>().add(LoadCustomers());
-              }
-            },
-          ),
-        ],
-      ),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Card(
-                  margin: const EdgeInsets.all(16),
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: AppColors.primaryAccent),
+            )
+          : CustomScrollView(
+              slivers: [
+                _buildSliverAppBar(),
+                SliverToBoxAdapter(
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
+                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        CircleAvatar(
-                          backgroundColor: Colors.deepPurple,
-                          radius: 30,
-                          child: Text(
-                            updatedCustomer!.name.substring(0, 1).toUpperCase(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                updatedCustomer!.name,
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '📱 ${updatedCustomer!.mobileNumber}',
-                                style: const TextStyle(fontSize: 16),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '📸 ${images.length} images',
-                                style: TextStyle(
-                                  color: Colors.grey[400],
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        _buildInfoCard(),
+                        const SizedBox(height: 24),
+                        _buildImagesSection(),
                       ],
                     ),
                   ),
                 ),
-                if (images.isEmpty)
-                  const Expanded(
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.photo, size: 64, color: Colors.grey),
-                          SizedBox(height: 16),
-                          Text(
-                            'No images found',
-                            style: TextStyle(fontSize: 18, color: Colors.grey),
-                          ),
-                          Text(
-                            'Edit customer to add images',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: GridView.builder(
-                        itemCount: images.length,
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
-                          childAspectRatio: 1,
-                        ),
-                        itemBuilder: (context, index) {
-                          final img = images[index];
-                          return GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => FullScreenGallery(
-                                    images: images,
-                                    initialIndex: index,
-                                  ),
-                                ),
-                              );
-                            },
-                            child: Card(
-                              clipBehavior: Clip.antiAlias,
-                              child: Image.file(
-                                File(img.imagePath),
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
               ],
             ),
+
+      // Floating edit button
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  EditCustomerScreen(customer: _customer, images: _images),
+            ),
+          );
+          if (result == true) _refresh();
+        },
+        backgroundColor: AppColors.primaryAccent,
+        foregroundColor: AppColors.onPrimary,
+        elevation: 0,
+        child: const Icon(Icons.edit_outlined),
+      ),
+    );
+  }
+
+  // ── Sliver App Bar with hero avatar ────────────────────────────────────────
+
+  SliverAppBar _buildSliverAppBar() {
+    return SliverAppBar(
+      expandedHeight: 220,
+      pinned: true,
+      backgroundColor: AppColors.background,
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back_ios_new, size: 18),
+        onPressed: () => Navigator.pop(context),
+      ),
+      flexibleSpace: FlexibleSpaceBar(
+        background: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF1C1B1B), AppColors.background],
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const SizedBox(height: 48),
+              TbAvatar(name: _customer.name, radius: 44),
+              const SizedBox(height: 14),
+              Text(
+                _customer.name,
+                style: AppTextStyles.headlineMd(),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.phone_outlined,
+                    size: 14,
+                    color: AppColors.muted,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(_customer.mobileNumber, style: AppTextStyles.bodyMd()),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Info card ───────────────────────────────────────────────────────────────
+
+  Widget _buildInfoCard() {
+    final created = DateTime.tryParse(_customer.createdAt);
+    final dateStr = created != null
+        ? '${created.day.toString().padLeft(2, '0')} '
+              '${_monthName(created.month)} ${created.year}'
+        : '—';
+
+    return TbCard(
+      child: Row(
+        children: [
+          Expanded(
+            child: _Stat(
+              label: 'IMAGES',
+              value: '${_images.length}',
+              icon: Icons.photo_library_outlined,
+            ),
+          ),
+          Container(width: 1, height: 40, color: AppColors.hairline),
+          Expanded(
+            child: _Stat(
+              label: 'ADDED',
+              value: dateStr,
+              icon: Icons.calendar_today_outlined,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Images section ──────────────────────────────────────────────────────────
+
+  Widget _buildImagesSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TbSectionHeader(
+          'Reference Photos',
+          trailing: Text(
+            '${_images.length}',
+            style: AppTextStyles.labelMd(color: AppColors.primaryAccent),
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (_images.isEmpty)
+          TbEmptyState(
+            icon: Icons.photo_outlined,
+            title: 'No photos yet',
+            subtitle: 'Tap the edit button to add reference images',
+          )
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 1,
+            ),
+            itemCount: _images.length,
+            itemBuilder: (context, i) {
+              return GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        FullScreenGallery(images: _images, initialIndex: i),
+                  ),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.file(
+                        File(_images[i].imagePath),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: AppColors.surfaceContHigh,
+                          child: const Icon(
+                            Icons.broken_image,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                      ),
+                      // Subtle border overlay
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppColors.hairline),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  String _monthName(int m) {
+    const n = [
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return n[m];
+  }
+}
+
+// ── Stat cell inside info card ─────────────────────────────────────────────────
+
+class _Stat extends StatelessWidget {
+  const _Stat({required this.label, required this.value, required this.icon});
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Icon(icon, color: AppColors.primaryAccent, size: 18),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: AppTextStyles.bodyLg(
+            color: AppColors.onSurface,
+          ).copyWith(fontWeight: FontWeight.w600),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        Text(label, style: AppTextStyles.labelMd()),
+      ],
     );
   }
 }
 
-class FullScreenGallery extends StatefulWidget {
-  final List<CustomerImage> images;
-  final int initialIndex;
+// ─────────────────────────────────────────────────────────────────────────────
+//  FullScreenGallery — unchanged logic, updated styling
+// ─────────────────────────────────────────────────────────────────────────────
 
+class FullScreenGallery extends StatefulWidget {
   const FullScreenGallery({
     super.key,
     required this.images,
     required this.initialIndex,
   });
+  final List<CustomerImage> images;
+  final int initialIndex;
 
   @override
   State<FullScreenGallery> createState() => _FullScreenGalleryState();
@@ -207,13 +326,19 @@ class FullScreenGallery extends StatefulWidget {
 
 class _FullScreenGalleryState extends State<FullScreenGallery> {
   late PageController _controller;
-  late int currentIndex;
+  late int _current;
 
   @override
   void initState() {
     super.initState();
-    currentIndex = widget.initialIndex;
+    _current = widget.initialIndex;
     _controller = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
@@ -222,25 +347,20 @@ class _FullScreenGalleryState extends State<FullScreenGallery> {
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        title: Text('${currentIndex + 1} of ${widget.images.length}'),
+        foregroundColor: Colors.white,
+        title: Text(
+          '${_current + 1} / ${widget.images.length}',
+          style: AppTextStyles.labelMd(color: Colors.white),
+        ),
         centerTitle: true,
       ),
       body: PageView.builder(
         controller: _controller,
         itemCount: widget.images.length,
-        onPageChanged: (index) {
-          setState(() {
-            currentIndex = index;
-          });
-        },
-        itemBuilder: (context, index) {
-          final img = widget.images[index];
-          return InteractiveViewer(
-            child: Center(
-              child: Image.file(File(img.imagePath)),
-            ),
-          );
-        },
+        onPageChanged: (i) => setState(() => _current = i),
+        itemBuilder: (_, i) => InteractiveViewer(
+          child: Center(child: Image.file(File(widget.images[i].imagePath))),
+        ),
       ),
     );
   }
