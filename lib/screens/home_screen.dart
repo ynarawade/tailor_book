@@ -2,9 +2,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:tailor_book/core/theme/app_txt_styles.dart';
+import 'package:tailor_book/core/utils/phoneFormatter.dart';
 import 'package:tailor_book/widgets/tb_avatar.dart';
 import 'package:tailor_book/widgets/tb_card.dart';
 import 'package:tailor_book/widgets/tb_msc_widget.dart';
+import 'package:tailor_book/widgets/tb_snackbar.dart';
 
 import '../bloc/customer_bloc.dart';
 import '../bloc/customer_event.dart';
@@ -127,21 +129,9 @@ class _HomeScreenState extends State<HomeScreen> {
           final msg = state is CustomerAdded
               ? state.message
               : (state as CustomerDeleted).message;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(msg),
-              backgroundColor: state is CustomerAdded
-                  ? AppColors.secondary
-                  : AppColors.warning,
-            ),
-          );
+          TbSnackbar.success(context, msg);
         } else if (state is CustomerError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: AppColors.errorContainer,
-            ),
-          );
+          TbSnackbar.error(context, state.message);
         }
       },
       builder: (context, state) {
@@ -165,8 +155,10 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
             itemCount: state.customers.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
-            itemBuilder: (context, i) =>
-                _CustomerCard(customer: state.customers[i]),
+            itemBuilder: (context, i) => _CustomerCard(
+              key: ValueKey(state.customers[i].id),
+              customer: state.customers[i],
+            ),
           );
         }
 
@@ -199,71 +191,97 @@ class _HomeScreenState extends State<HomeScreen> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _CustomerCard extends StatelessWidget {
-  const _CustomerCard({required this.customer});
+  const _CustomerCard({super.key, required this.customer});
   final Customer customer;
 
   @override
   Widget build(BuildContext context) {
-    return TbCard(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => CustomerDetailsScreen(customer: customer),
+    return Dismissible(
+      key: key ?? ValueKey(customer.id),
+      direction: DismissDirection.endToStart, // Swipe from right to left only
+      // ── Swipe Background Layout ───────────────────────────────────────────
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 24.0),
+        decoration: BoxDecoration(
+          color: AppColors.error, // Soft red background
+          borderRadius: BorderRadius.circular(
+            12,
+          ), // Match your card corner radius
         ),
+        child: const Icon(Icons.delete_outline, color: Colors.white, size: 24),
       ),
-      child: Row(
-        children: [
-          TbAvatar(name: customer.name, radius: 26),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  customer.name,
-                  style: AppTextStyles.headlineSm(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.phone_outlined,
-                      size: 12,
-                      color: AppColors.muted,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(customer.mobileNumber, style: AppTextStyles.bodyMd()),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    TbBadge(
-                      icon: Icons.photo_library_outlined,
-                      count: customer.imageCount,
-                    ),
-                  ],
-                ),
-              ],
-            ),
+
+      // ── Confirm Swipe Action ──────────────────────────────────────────────
+      confirmDismiss: (direction) async {
+        // Triggers your existing confirmation dialog
+        return await _showDeleteDialog(context);
+      },
+
+      // ── Dispatch Action on Confirmed Swipe ────────────────────────────────
+      onDismissed: (direction) {
+        context.read<CustomerBloc>().add(DeleteCustomer(customer.id!));
+      },
+
+      // ── Your Original Card UI (Minus the explicit trash icon) ──────────────
+      child: TbCard(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CustomerDetailsScreen(customer: customer),
           ),
-          IconButton(
-            icon: const Icon(
-              Icons.delete_outline,
-              color: AppColors.muted,
-              size: 20,
+        ),
+        child: Row(
+          children: [
+            TbAvatar(name: customer.name, radius: 26),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    customer.name,
+                    style: AppTextStyles.headlineSm(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.phone_outlined,
+                        size: 12,
+                        color: AppColors.muted,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        PhoneFormatter.toIndianStandard(customer.mobileNumber),
+                        style: AppTextStyles.labelMd().copyWith(fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      TbBadge(
+                        icon: Icons.photo_library_outlined,
+                        count: customer.imageCount,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-            onPressed: () => _showDeleteDialog(context),
-          ),
-        ],
+            // Explicit delete button removed for a much cleaner look!
+          ],
+        ),
       ),
     );
   }
 
-  void _showDeleteDialog(BuildContext context) {
-    showDialog(
+  // ── Updated Dialog to return a boolean ─────────────────────────────────────
+  Future<bool?> _showDeleteDialog(BuildContext context) {
+    return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Client'),
@@ -272,14 +290,16 @@ class _CustomerCard extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+            onPressed: () =>
+                Navigator.pop(ctx, false), // Cancel swipe return false
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppColors.onSurface),
+            ),
           ),
           TextButton(
-            onPressed: () {
-              context.read<CustomerBloc>().add(DeleteCustomer(customer.id!));
-              Navigator.pop(ctx);
-            },
+            onPressed: () =>
+                Navigator.pop(ctx, true), // Confirm swipe return true
             style: TextButton.styleFrom(foregroundColor: AppColors.error),
             child: const Text('Delete'),
           ),

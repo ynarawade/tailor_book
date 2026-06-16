@@ -5,11 +5,13 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:tailor_book/core/theme/app_txt_styles.dart';
+import 'package:tailor_book/services/image_compress_util.dart';
 import 'package:tailor_book/widgets/tb_button.dart';
 import 'package:tailor_book/widgets/tb_card.dart';
 import 'package:tailor_book/widgets/tb_img_grid.dart';
 import 'package:tailor_book/widgets/tb_input_field.dart';
 import 'package:tailor_book/widgets/tb_msc_widget.dart';
+import 'package:tailor_book/widgets/tb_snackbar.dart';
 
 import '../core/theme/app_colors.dart';
 import '../database/database_helper.dart';
@@ -37,6 +39,7 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
   final List<XFile> _new = [];
   final _picker = ImagePicker();
   bool _loading = false;
+  bool _compressing = false;
 
   @override
   void initState() {
@@ -55,12 +58,22 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
 
   Future<void> _pickCamera() async {
     final img = await _picker.pickImage(source: ImageSource.camera);
-    if (img != null) setState(() => _new.add(img));
+    if (img == null) return;
+
+    setState(() => _compressing = true);
+    final compressed = await ImageCompressUtil.compressAndSave(img);
+    if (compressed != null) setState(() => _new.add(compressed));
+    setState(() => _compressing = false);
   }
 
   Future<void> _pickGallery() async {
     final imgs = await _picker.pickMultiImage();
-    if (imgs.isNotEmpty) setState(() => _new.addAll(imgs));
+    if (imgs.isEmpty) return;
+
+    setState(() => _compressing = true);
+    final compressed = await ImageCompressUtil.compressAll(imgs);
+    if (compressed.isNotEmpty) setState(() => _new.addAll(compressed));
+    setState(() => _compressing = false);
   }
 
   void _removeExisting(int index) {
@@ -101,31 +114,44 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
       });
 
       // Delete removed images
+      final appDir =
+          await getApplicationDocumentsDirectory(); // get base dir once
       final originalIds = widget.images.map((e) => e.id!).toSet();
       final currentIds = _existing.map((e) => e.id!).toSet();
       for (final id in originalIds.difference(currentIds)) {
         final img = widget.images.firstWhere((e) => e.id == id);
         await db.deleteImage(id);
-        final f = File(img.imagePath);
+        final f = File(
+          p.join(appDir.path, img.imagePath),
+        ); // ← reconstruct absolute path
         if (await f.exists()) await f.delete();
       }
 
       // Save new images
       if (_new.isNotEmpty) {
-        final dir = await getApplicationDocumentsDirectory();
-        final customerDir = Directory(
-          p.join(dir.path, 'customer_images', 'customer_${widget.customer.id}'),
+        final subPath = p.join(
+          'customer_images',
+          'customer_${widget.customer.id}',
         );
+        final customerDir = Directory(p.join(appDir.path, subPath));
+
         if (!await customerDir.exists()) {
           await customerDir.create(recursive: true);
         }
         for (int i = 0; i < _new.length; i++) {
           final name = 'image_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
-          final dest = p.join(customerDir.path, name);
-          await File(_new[i].path).copy(dest);
+          final relativePath = p.join(
+            subPath,
+            name,
+          ); // ← relative: customer_images/customer_1/img.jpg
+          final absolutePath = p.join(
+            appDir.path,
+            relativePath,
+          ); // ← absolute: for actual file operation
+          await File(_new[i].path).copy(absolutePath);
           await db.insertImage({
             'customer_id': widget.customer.id,
-            'image_path': dest,
+            'image_path': relativePath, // only relative path in DB
             'image_type': 'general',
             'created_at': DateTime.now().toIso8601String(),
           });
@@ -133,16 +159,13 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Client updated successfully')),
-        );
+        TbSnackbar.success(context, "Client updated successfully");
+
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+        TbSnackbar.error(context, "Error: ${e.toString()}");
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -280,6 +303,26 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
                       ),
                     ],
                   ),
+                  if (_compressing) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.5,
+                            color: AppColors.primaryAccent,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Compressing images…',
+                          style: AppTextStyles.bodyMd(color: AppColors.muted),
+                        ),
+                      ],
+                    ),
+                  ],
                   if (totalImages > 0) ...[
                     const SizedBox(height: 16),
                     TbImageGrid(
@@ -297,7 +340,8 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
             const SizedBox(height: 32),
             TbButton(
               label: 'Save Changes',
-              onPressed: _save,
+              onPressed: (_compressing || _loading) ? null : _save,
+
               isLoading: _loading,
               icon: Icons.check_rounded,
             ),

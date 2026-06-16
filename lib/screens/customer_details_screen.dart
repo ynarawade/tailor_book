@@ -3,7 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'package:tailor_book/core/theme/app_txt_styles.dart';
+import 'package:tailor_book/core/utils/phoneFormatter.dart';
+import 'package:tailor_book/widgets/fullscreen_viewer.dart';
 import 'package:tailor_book/widgets/tb_avatar.dart';
 import 'package:tailor_book/widgets/tb_card.dart';
 import 'package:tailor_book/widgets/tb_msc_widget.dart';
@@ -38,9 +42,28 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
   Future<void> _loadImages() async {
     final db = DatabaseHelper();
     final raw = await db.getCustomerImages(_customer.id!);
+    final appDir = await getApplicationDocumentsDirectory();
+
     if (mounted) {
       setState(() {
-        _images = raw.map((e) => CustomerImage.fromMap(e)).toList();
+        _images = raw.map((e) {
+          final map = Map<String, dynamic>.from(e);
+          final storedPath = e['image_path'] as String;
+
+          // Old records have absolute paths (start with /)
+          // New records have relative paths (start with customer_images/...)
+          // Handle both:
+          if (storedPath.startsWith('/')) {
+            map['image_path'] = storedPath; // already absolute, use as-is
+          } else {
+            map['image_path'] = path.join(
+              appDir.path,
+              storedPath,
+            ); // reconstruct
+          }
+
+          return CustomerImage.fromMap(map);
+        }).toList();
         _loading = false;
       });
     }
@@ -143,7 +166,10 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
                     color: AppColors.muted,
                   ),
                   const SizedBox(width: 6),
-                  Text(_customer.mobileNumber, style: AppTextStyles.bodyMd()),
+                  Text(
+                    PhoneFormatter.toIndianStandard(_customer.mobileNumber),
+                    style: AppTextStyles.labelMd().copyWith(fontSize: 13),
+                  ),
                 ],
               ),
             ],
@@ -217,6 +243,7 @@ class _CustomerDetailsScreenState extends State<CustomerDetailsScreen> {
             ),
             itemCount: _images.length,
             itemBuilder: (context, i) {
+              print(_images.first.imagePath);
               return GestureDetector(
                 onTap: () => Navigator.push(
                   context,
@@ -303,65 +330,6 @@ class _Stat extends StatelessWidget {
         const SizedBox(height: 2),
         Text(label, style: AppTextStyles.labelMd()),
       ],
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  FullScreenGallery — unchanged logic, updated styling
-// ─────────────────────────────────────────────────────────────────────────────
-
-class FullScreenGallery extends StatefulWidget {
-  const FullScreenGallery({
-    super.key,
-    required this.images,
-    required this.initialIndex,
-  });
-  final List<CustomerImage> images;
-  final int initialIndex;
-
-  @override
-  State<FullScreenGallery> createState() => _FullScreenGalleryState();
-}
-
-class _FullScreenGalleryState extends State<FullScreenGallery> {
-  late PageController _controller;
-  late int _current;
-
-  @override
-  void initState() {
-    super.initState();
-    _current = widget.initialIndex;
-    _controller = PageController(initialPage: widget.initialIndex);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white,
-        title: Text(
-          '${_current + 1} / ${widget.images.length}',
-          style: AppTextStyles.labelMd(color: Colors.white),
-        ),
-        centerTitle: true,
-      ),
-      body: PageView.builder(
-        controller: _controller,
-        itemCount: widget.images.length,
-        onPageChanged: (i) => setState(() => _current = i),
-        itemBuilder: (_, i) => InteractiveViewer(
-          child: Center(child: Image.file(File(widget.images[i].imagePath))),
-        ),
-      ),
     );
   }
 }

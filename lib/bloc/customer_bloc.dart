@@ -1,7 +1,9 @@
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
 import 'dart:io';
+
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
+
 import '../database/database_helper.dart';
 import '../models/customer.dart';
 import 'customer_event.dart';
@@ -56,33 +58,45 @@ class CustomerBloc extends Bloc<CustomerEvent, CustomerState> {
   void _onAddCustomer(AddCustomer event, Emitter<CustomerState> emit) async {
     emit(CustomerLoading());
     try {
-      // Insert customer
+      // 1. Insert customer metadata into database
       final customerId = await _databaseHelper.insertCustomer({
         'name': event.name,
         'mobile_number': event.mobileNumber,
         'created_at': DateTime.now().toIso8601String(),
       });
 
-      // Save images to device storage and store paths
+      // 2. Setup the permanent directory path
       final directory = await getApplicationDocumentsDirectory();
+      final customerDirSubPath = 'customer_images/customer_$customerId';
       final customerDir = Directory(
-        '${directory.path}/customer_images/customer_$customerId',
+        path.join(directory.path, customerDirSubPath),
       );
+
       if (!await customerDir.exists()) {
         await customerDir.create(recursive: true);
       }
 
+      // 3. Process and move each compressed image
       for (int i = 0; i < event.imagePaths.length; i++) {
-        final originalFile = File(event.imagePaths[i]);
         final fileName =
             'image_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
-        final newPath = path.join(customerDir.path, fileName);
 
-        await originalFile.copy(newPath);
+        // This is where the file will physically live
+        final absoluteNewPath = path.join(customerDir.path, fileName);
 
+        // This safe relative string is what we store in SQLite
+        final relativeDatabasePath = path.join(customerDirSubPath, fileName);
+
+        // PHYSICAL FILE MOVE: Relocate from the compressor's destination
+        final sourceFile = File(event.imagePaths[i]);
+        if (await sourceFile.exists()) {
+          await sourceFile.rename(absoluteNewPath);
+        }
+
+        // 4. Save the RELATIVE path to the database
         await _databaseHelper.insertImage({
           'customer_id': customerId,
-          'image_path': newPath,
+          'image_path': relativeDatabasePath, // Safe for iOS updates!
           'image_type': 'general',
           'created_at': DateTime.now().toIso8601String(),
         });
@@ -103,7 +117,9 @@ class CustomerBloc extends Bloc<CustomerEvent, CustomerState> {
       // Delete customer images from file system
       final images = await _databaseHelper.getCustomerImages(event.customerId);
       for (final imageData in images) {
-        final file = File(imageData['image_path']);
+        final appDir = await getApplicationDocumentsDirectory();
+        final file = File(path.join(appDir.path, imageData['image_path']));
+
         if (await file.exists()) {
           await file.delete();
         }

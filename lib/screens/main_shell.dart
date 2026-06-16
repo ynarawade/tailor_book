@@ -1,8 +1,3 @@
-//
-// Hosts the bottom nav and switches between the two top-level tabs.
-// HomeScreen (Clients) and BackupScreen live here as persistent pages
-// so their state is preserved when switching tabs.
-
 import 'package:flutter/material.dart';
 import 'package:tailor_book/widgets/tb_bottom_nav.dart';
 

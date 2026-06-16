@@ -4,11 +4,13 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:tailor_book/core/theme/app_txt_styles.dart';
+import 'package:tailor_book/services/image_compress_util.dart';
 import 'package:tailor_book/widgets/tb_button.dart';
 import 'package:tailor_book/widgets/tb_card.dart';
 import 'package:tailor_book/widgets/tb_img_grid.dart';
 import 'package:tailor_book/widgets/tb_input_field.dart';
 import 'package:tailor_book/widgets/tb_msc_widget.dart';
+import 'package:tailor_book/widgets/tb_snackbar.dart';
 
 import '../bloc/customer_bloc.dart';
 import '../bloc/customer_event.dart';
@@ -27,6 +29,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   final _mobileCtrl = TextEditingController();
   final _picker = ImagePicker();
   final List<XFile> _images = [];
+  bool _compressing = false;
 
   @override
   void dispose() {
@@ -39,12 +42,22 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
 
   Future<void> _pickCamera() async {
     final img = await _picker.pickImage(source: ImageSource.camera);
-    if (img != null) setState(() => _images.add(img));
+    if (img == null) return;
+
+    setState(() => _compressing = true);
+    final compressed = await ImageCompressUtil.compressAndSave(img);
+    if (compressed != null) setState(() => _images.add(compressed));
+    setState(() => _compressing = false);
   }
 
   Future<void> _pickGallery() async {
     final imgs = await _picker.pickMultiImage();
-    if (imgs.isNotEmpty) setState(() => _images.addAll(imgs));
+    if (imgs.isEmpty) return;
+
+    setState(() => _compressing = true);
+    final compressed = await ImageCompressUtil.compressAll(imgs);
+    if (compressed.isNotEmpty) setState(() => _images.addAll(compressed));
+    setState(() => _compressing = false);
   }
 
   Future<void> _pickContact() async {
@@ -97,9 +110,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
       }
     } catch (e) {
       if (mounted && Navigator.canPop(context)) Navigator.pop(context);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed: ${e.toString()}')));
+      TbSnackbar.error(context, 'Failed: ${e.toString()}');
     }
   }
 
@@ -133,9 +144,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   void _save() {
     if (!_formKey.currentState!.validate()) return;
     if (_images.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please add at least one photo')),
-      );
+      TbSnackbar.warning(context, "Please add at least one photo");
       return;
     }
     context.read<CustomerBloc>().add(
@@ -264,11 +273,31 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                 ],
               ),
             ),
-
+            if (_compressing) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: AppColors.primaryAccent,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Compressing images…',
+                    style: AppTextStyles.bodyMd(color: AppColors.muted),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 32),
             TbButton(
               label: 'Save Client Profile',
-              onPressed: _save,
+              onPressed: _compressing ? null : _save,
+
               icon: Icons.check_rounded,
             ),
           ],

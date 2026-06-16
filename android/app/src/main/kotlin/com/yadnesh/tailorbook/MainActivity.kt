@@ -1,4 +1,4 @@
-package com.example.tailor_book
+package com.yadnesh.tailorbook
 
 import io.flutter.embedding.android.FlutterActivity
 
