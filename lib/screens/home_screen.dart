@@ -1,4 +1,6 @@
 // lib/screens/home_screen.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:tailor_book/core/theme/app_txt_styles.dart';
@@ -25,6 +27,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _searchController = TextEditingController();
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -35,6 +38,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _debounce?.cancel();
+
     super.dispose();
   }
 
@@ -115,7 +120,12 @@ class _HomeScreenState extends State<HomeScreen> {
             size: 20,
           ),
         ),
-        onChanged: (v) => context.read<CustomerBloc>().add(SearchCustomers(v)),
+        onChanged: (v) {
+          _debounce?.cancel();
+          _debounce = Timer(const Duration(milliseconds: 300), () {
+            context.read<CustomerBloc>().add(SearchCustomers(v));
+          });
+        },
       ),
     );
   }
