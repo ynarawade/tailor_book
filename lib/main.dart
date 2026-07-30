@@ -1,30 +1,43 @@
-// lib/main.dart
+import 'package:atelier/screens/home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'bloc/customer_bloc.dart';
-import 'bloc/customer_event.dart';
-import 'core/theme/app_theme.dart';
-import 'screens/main_shell.dart';
+import 'core/theme/atelier_theme.dart';
+import 'core/theme/theme_controller.dart';
 
-void main() {
-  runApp(const TailorBookApp());
+final themeController = ThemeController();
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MyApp());
 }
 
-class TailorBookApp extends StatelessWidget {
-  const TailorBookApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MultiBlocProvider(
       providers: [
-        BlocProvider(create: (_) => CustomerBloc()..add(LoadCustomers())),
+        BlocProvider<CustomerBloc>(
+          create: (context) =>
+              CustomerBloc(), // or your Bloc initialization logic
+        ),
       ],
-      child: MaterialApp(
-        title: 'TailorBook',
-        theme: AppTheme.dark,
-        home: const MainShell(),
-        debugShowCheckedModeBanner: false,
+      child: ListenableBuilder(
+        listenable: themeController,
+        builder: (context, _) {
+          return MaterialApp(
+            title: 'Atelier',
+            debugShowCheckedModeBanner: false,
+            themeMode: themeController.themeMode,
+            theme: AtelierTheme.lightTheme(),
+            darkTheme: AtelierTheme.darkTheme(),
+
+            home: const HomeScreen(),
+          );
+        },
       ),
     );
   }

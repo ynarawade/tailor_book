@@ -2,6 +2,8 @@ abstract class CustomerEvent {}
 
 class LoadCustomers extends CustomerEvent {}
 
+class LoadMoreCustomers extends CustomerEvent {}
+
 class SearchCustomers extends CustomerEvent {
   final String query;
   SearchCustomers(this.query);
@@ -10,13 +12,8 @@ class SearchCustomers extends CustomerEvent {
 class AddCustomer extends CustomerEvent {
   final String name;
   final String mobileNumber;
-  final List<String> imagePaths;
 
-  AddCustomer({
-    required this.name,
-    required this.mobileNumber,
-    required this.imagePaths,
-  });
+  AddCustomer({required this.name, required this.mobileNumber});
 }
 
 class DeleteCustomer extends CustomerEvent {

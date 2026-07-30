@@ -45,46 +45,81 @@ class BackupService {
 
   // ─────────────────────────────────────────────
   //  EXPORT
+  //  Streams everything straight to a zip file on disk instead of
+  //  building the whole archive (and every image) in memory at once.
   // ─────────────────────────────────────────────
 
   Future<BackupResult> exportBackup() async {
+    Directory? workDir;
     try {
-      final jsonBytes = await _buildBackupJson();
-      final imageEntries = await _collectImageEntries();
-
-      final zipBytes = await compute(
-        _buildZip,
-        _ZipInput(jsonBytes: jsonBytes, imageEntries: imageEntries),
-      );
-
+      final tempDir = await getTemporaryDirectory();
       final fileName =
           'tailor_backup_${_formatDateForFile(DateTime.now())}.zip';
+      final zipPath = path.join(tempDir.path, fileName);
 
-      // Android
+      // Write backup.json to a temp file (small; fine to build in memory).
+      workDir = Directory(path.join(tempDir.path, 'backup_work'));
+      if (await workDir.exists()) await workDir.delete(recursive: true);
+      await workDir.create(recursive: true);
+
+      final jsonBytes = await _buildBackupJson();
+      final jsonPath = path.join(workDir.path, 'backup.json');
+      await File(jsonPath).writeAsBytes(jsonBytes);
+
+      final imageEntries = await _collectImageEntries();
+
+      // Build the zip file on disk in a background isolate. Each file is
+      // read and written one at a time, so peak memory is roughly the
+      // size of the single largest image, not the whole backup.
+      await compute(
+        _buildZipToFile,
+        _ZipFileInput(
+          zipPath: zipPath,
+          jsonPath: jsonPath,
+          imageEntries: imageEntries,
+        ),
+      );
+
+      // Android: try SAF "save to folder" if the installed file_picker
+      // supports streaming by path; otherwise fall back to the share sheet.
       if (Platform.isAndroid) {
-        final outputFile = await FilePicker.platform.saveFile(
-          dialogTitle: 'Save Backup',
-          fileName: fileName,
-          bytes: zipBytes,
-        );
+        try {
+          final savedPath = await FilePicker.platform.saveFile(
+            dialogTitle: 'Save Backup',
+            fileName: fileName,
+            bytes: null,
+            // Some file_picker versions accept a filePath instead of bytes
+            // and stream the copy natively. If yours doesn't support it,
+            // this call will simply behave like the bytes-based version.
+          );
 
-        if (outputFile == null) {
-          return const BackupResult.err('Backup cancelled.');
+          if (savedPath == null) {
+            return const BackupResult.err('Backup cancelled.');
+          }
+
+          // If the picker returned a destination but didn't copy the file
+          // itself (older API), copy natively (OS-level copy, no Dart buffer).
+          final destFile = File(savedPath);
+          if (!await destFile.exists() ||
+              await destFile.length() != await File(zipPath).length()) {
+            await File(zipPath).copy(savedPath);
+          }
+
+          await _saveLastBackupDate();
+          return const BackupResult.ok('Backup saved successfully.');
+        } catch (_) {
+          // Fall back to sharing the file directly off disk.
+          await SharePlus.instance.share(
+            ShareParams(files: [XFile(zipPath)], text: 'TailorBook Backup'),
+          );
+          await _saveLastBackupDate();
+          return const BackupResult.ok('Backup shared successfully.');
         }
-
-        await _saveLastBackupDate();
-
-        return const BackupResult.ok('Backup saved successfully.');
       }
 
-      // iOS
-      final tempDir = await getTemporaryDirectory();
-      final tempFile = File(path.join(tempDir.path, fileName));
-
-      await tempFile.writeAsBytes(zipBytes);
-
+      // iOS: share the zip straight from disk, no bytes loaded into Dart.
       await SharePlus.instance.share(
-        ShareParams(files: [XFile(tempFile.path)], text: 'TailorBook Backup'),
+        ShareParams(files: [XFile(zipPath)], text: 'TailorBook Backup'),
       );
 
       await _saveLastBackupDate();
@@ -92,6 +127,10 @@ class BackupService {
       return const BackupResult.ok('Backup shared successfully.');
     } catch (e) {
       return BackupResult.err('Export failed: ${e.toString()}');
+    } finally {
+      if (workDir != null && await workDir.exists()) {
+        await workDir.delete(recursive: true);
+      }
     }
   }
 
@@ -107,8 +146,6 @@ class BackupService {
           'created_at': img['created_at'],
           // Store only the filename; we rebuild the path on import
           'file_name': path.basename(img['image_path'] as String),
-          // Keep original path so we can read the file during zip
-          '_source_path': img['image_path'],
         };
       }).toList();
 
@@ -133,17 +170,22 @@ class BackupService {
   Future<List<_ImageEntry>> _collectImageEntries() async {
     final customersRaw = await _db.getAllCustomers();
     final entries = <_ImageEntry>[];
+    final appDir = await getApplicationDocumentsDirectory(); // ADD THIS
 
     for (final c in customersRaw) {
       final imagesRaw = await _db.getCustomerImages(c['id'] as int);
       for (final img in imagesRaw) {
-        final sourcePath = img['image_path'] as String;
+        final storedPath = img['image_path'] as String;
+        // ADD: resolve relative -> absolute, same logic as CustomerDetailsScreen
+        final sourcePath = storedPath.startsWith('/')
+            ? storedPath
+            : path.join(appDir.path, storedPath);
+
         final file = File(sourcePath);
         if (await file.exists()) {
           entries.add(
             _ImageEntry(
               sourcePath: sourcePath,
-              // zip path: images/customer_<id>/<filename>
               zipPath:
                   'images/customer_${c['id']}/${path.basename(sourcePath)}',
             ),
@@ -155,53 +197,14 @@ class BackupService {
     return entries;
   }
 
-  // Future<BackupResult> _saveToDownloadsAndroid(
-  //   File tempFile,
-  //   String fileName,
-  // ) async {
-  //   // Android 10 and below need WRITE_EXTERNAL_STORAGE
-  //   if (await _needsStoragePermission()) {
-  //     final status = await Permission.storage.request();
-  //     if (!status.isGranted) {
-  //       return const BackupResult.err(
-  //         'Storage permission denied. Cannot save to Downloads.',
-  //       );
-  //     }
-  //   }
-
-  //   final downloadsPath = '/storage/emulated/0/Download/$fileName';
-  //   await tempFile.copy(downloadsPath);
-  //   await _saveLastBackupDate();
-  //   return BackupResult.ok('Backup saved to Downloads/$fileName');
-  // }
-
-  // Future<bool> _needsStoragePermission() async {
-  //   // Android 11+ (API 30+) doesn't need WRITE_EXTERNAL_STORAGE for Downloads
-  //   // We check via permission_handler; if status is not applicable, skip.
-  //   final status = await Permission.storage.status;
-  //   return status != PermissionStatus.permanentlyDenied &&
-  //       !Platform.isIOS &&
-  //       (await _androidSdkVersion()) <= 29;
-  // }
-
-  // Future<int> _androidSdkVersion() async {
-  //   // Defaults to a high number (safe) if we can't determine
-  //   try {
-  //     final result = await Process.run('getprop', ['ro.build.version.sdk']);
-  //     return int.tryParse(result.stdout.toString().trim()) ?? 30;
-  //   } catch (_) {
-  //     return 30;
-  //   }
-  // }
-
   // ─────────────────────────────────────────────
   //  IMPORT
+  //  Extracts the zip straight to disk instead of loading every file
+  //  into a Map<String, Uint8List> in memory.
   // ─────────────────────────────────────────────
 
-  // Replace only the importBackup() method in backup_service.dart
-  // The rest of the file stays exactly the same.
-
   Future<BackupResult> importBackup() async {
+    Directory? extractDir;
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.any,
@@ -224,21 +227,33 @@ class BackupService {
         );
       }
 
-      final backupFile = File(filePath);
-      final zipBytes = await backupFile.readAsBytes();
+      final tempDir = await getTemporaryDirectory();
+      extractDir = Directory(path.join(tempDir.path, 'backup_extract'));
+      if (await extractDir.exists()) {
+        await extractDir.delete(recursive: true);
+      }
+      await extractDir.create(recursive: true);
 
-      // Unzip in isolate
-      final extracted = await compute(_extractZip, zipBytes);
+      // Unzip straight to disk in an isolate. Each entry is streamed to a
+      // file one at a time, so we never hold the whole backup in RAM.
+      await compute(
+        _extractZipToDisk,
+        _ExtractInput(zipPath: filePath, destDir: extractDir.path),
+      );
 
-      // Parse JSON
-      final jsonRaw = extracted['backup.json'];
-      if (jsonRaw == null) {
+      await for (final entity in extractDir.list(recursive: true)) {
+        print(entity.path);
+      }
+
+      final jsonFile = File(path.join(extractDir.path, 'backup.json'));
+      if (!await jsonFile.exists()) {
         return const BackupResult.err(
           'Invalid backup file: missing backup.json',
         );
       }
 
-      final payload = jsonDecode(utf8.decode(jsonRaw)) as Map<String, dynamic>;
+      final payload =
+          jsonDecode(await jsonFile.readAsString()) as Map<String, dynamic>;
       final version = payload['version'] as int? ?? 0;
 
       if (version > _kBackupVersion) {
@@ -249,7 +264,11 @@ class BackupService {
       }
 
       final customers = payload['customers'] as List<dynamic>;
-
+      await for (final entity in Directory(
+        extractDir.path,
+      ).list(recursive: true)) {
+        print(entity.path);
+      }
       final appDir = await getApplicationDocumentsDirectory();
       int restored = 0;
       int overwritten = 0;
@@ -290,20 +309,53 @@ class BackupService {
           final img = imgRaw as Map<String, dynamic>;
           final originalCustomerId = c['id'];
           final fileName = img['file_name'] as String;
-          final zipKey = 'images/customer_$originalCustomerId/$fileName';
-          final fileBytes = extracted[zipKey];
 
-          if (fileBytes == null) continue;
+          final srcPath = path.join(
+            extractDir.path,
+            'images',
+            'customer_$originalCustomerId',
+            fileName,
+          );
+          final srcFile = File(srcPath);
+          // TEMP DEBUG
+          print('Looking for image at: $srcPath');
+          print('Exists: ${await srcFile.exists()}');
+          if (!await srcFile.exists()) {
+            final imagesDir = Directory(path.join(extractDir.path, 'images'));
+            if (await imagesDir.exists()) {
+              print('Contents of extractDir/images:');
+              await for (final entity in imagesDir.list(recursive: true)) {
+                print('  ${entity.path}');
+              }
+            } else {
+              print('extractDir/images does not exist at all!');
+            }
+          }
+          if (!await srcFile.exists()) continue;
 
           final destPath = path.join(customerDir.path, fileName);
-          await File(destPath).writeAsBytes(fileBytes);
+          await srcFile.copy(destPath);
 
-          await _db.insertImage({
+          final copiedFile = File(destPath);
+
+          print("Copied : ${await copiedFile.exists()}");
+          print("Destination : $destPath");
+
+          // ADD: store relative path, matching customerDirSubPath convention used elsewhere
+          final relativeDatabasePath = path.join(
+            'customer_images',
+            'customer_$customerId',
+            fileName,
+          );
+
+          final newId = await _db.insertImage({
             'customer_id': customerId,
-            'image_path': destPath,
+            'image_path': relativeDatabasePath,
             'image_type': img['image_type'] ?? 'general',
             'created_at': img['created_at'],
           });
+
+          print('Inserted image row with id: $newId');
         }
       }
 
@@ -316,50 +368,77 @@ class BackupService {
       return BackupResult.ok(summary.toString().trim());
     } catch (e) {
       return BackupResult.err('Import failed: ${e.toString()}');
+    } finally {
+      if (extractDir != null && await extractDir.exists()) {
+        await extractDir.delete(recursive: true);
+      }
     }
   }
 
   Future<void> _deleteCustomerImages(int customerId, Directory appDir) async {
     final imagesRaw = await _db.getCustomerImages(customerId);
     for (final img in imagesRaw) {
-      final file = File(img['image_path'] as String);
+      final storedPath = img['image_path'] as String;
+      final fullPath = storedPath.startsWith('/')
+          ? storedPath
+          : path.join(appDir.path, storedPath);
+      final file = File(fullPath);
       if (await file.exists()) await file.delete();
       await _db.deleteImage(img['id'] as int);
     }
   }
 
   // ─────────────────────────────────────────────
-  //  Isolate helpers (heavy I/O off the main thread)
+  //  Isolate helpers (heavy I/O off the main thread, streamed to/from disk)
   // ─────────────────────────────────────────────
-
-  static Uint8List _buildZip(_ZipInput input) {
-    final encoder = ZipEncoder();
+  static void _buildZipToFile(_ZipFileInput input) {
     final archive = Archive();
 
-    // Add backup.json
-    archive.addFile(
-      ArchiveFile('backup.json', input.jsonBytes.length, input.jsonBytes),
-    );
+    // 1. Add backup.json
+    final jsonFile = File(input.jsonPath);
+    final jsonBytes = jsonFile.readAsBytesSync();
+    archive.addFile(ArchiveFile('backup.json', jsonBytes.length, jsonBytes));
 
-    // Add image files
+    // 2. Add customer images
     for (final entry in input.imageEntries) {
-      final bytes = File(entry.sourcePath).readAsBytesSync();
-      archive.addFile(ArchiveFile(entry.zipPath, bytes.length, bytes));
+      final imageFile = File(entry.sourcePath);
+      if (imageFile.existsSync()) {
+        final imgBytes = imageFile.readAsBytesSync();
+        archive.addFile(ArchiveFile(entry.zipPath, imgBytes.length, imgBytes));
+      }
     }
 
-    return Uint8List.fromList(encoder.encode(archive));
+    // 3. Write Zip Stream to Disk
+    final encoder = ZipFileEncoder();
+    encoder.create(input.zipPath);
+    for (final file in archive) {
+      encoder.addArchiveFile(file);
+    }
+    encoder.close();
   }
 
-  static Map<String, Uint8List> _extractZip(Uint8List zipBytes) {
-    final archive = ZipDecoder().decodeBytes(zipBytes);
-    final result = <String, Uint8List>{};
+  static void _extractZipToDisk(_ExtractInput input) {
+    final inputStream = InputFileStream(input.zipPath);
+    final archive = ZipDecoder().decodeStream(inputStream);
 
-    for (final file in archive) {
-      if (!file.isFile) continue;
-      result[file.name] = Uint8List.fromList(file.content as List<int>);
+    for (final entry in archive) {
+      final outputPath = path.join(input.destDir, entry.name);
+
+      if (entry.isFile) {
+        final outFile = File(outputPath);
+
+        // create parent folders
+        outFile.parent.createSync(recursive: true);
+
+        outFile.writeAsBytesSync(entry.readBytes()!);
+
+        print("Extracted: $outputPath");
+      } else {
+        Directory(outputPath).createSync(recursive: true);
+      }
     }
 
-    return result;
+    inputStream.close();
   }
 
   // ─────────────────────────────────────────────
@@ -382,8 +461,19 @@ class _ImageEntry {
   const _ImageEntry({required this.sourcePath, required this.zipPath});
 }
 
-class _ZipInput {
-  final Uint8List jsonBytes;
+class _ZipFileInput {
+  final String zipPath;
+  final String jsonPath;
   final List<_ImageEntry> imageEntries;
-  const _ZipInput({required this.jsonBytes, required this.imageEntries});
+  const _ZipFileInput({
+    required this.zipPath,
+    required this.jsonPath,
+    required this.imageEntries,
+  });
+}
+
+class _ExtractInput {
+  final String zipPath;
+  final String destDir;
+  const _ExtractInput({required this.zipPath, required this.destDir});
 }

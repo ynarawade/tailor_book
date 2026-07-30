@@ -1,21 +1,13 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:tailor_book/core/theme/app_txt_styles.dart';
-import 'package:tailor_book/services/image_compress_util.dart';
-import 'package:tailor_book/widgets/tb_button.dart';
-import 'package:tailor_book/widgets/tb_card.dart';
-import 'package:tailor_book/widgets/tb_img_grid.dart';
-import 'package:tailor_book/widgets/tb_input_field.dart';
-import 'package:tailor_book/widgets/tb_msc_widget.dart';
-import 'package:tailor_book/widgets/tb_snackbar.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
-import '../core/theme/app_colors.dart';
-import '../database/database_helper.dart';
+import '../bloc/customer_bloc.dart';
+import '../bloc/customer_event.dart';
+import '../bloc/customer_state.dart';
+import '../core/theme/atelier_theme.dart';
 import '../models/customer.dart';
+import '../widgets/tb_snackbar.dart';
 
 class EditCustomerScreen extends StatefulWidget {
   const EditCustomerScreen({
@@ -35,18 +27,13 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nameCtrl;
   late TextEditingController _mobileCtrl;
-  late List<CustomerImage> _existing;
-  final List<XFile> _new = [];
-  final _picker = ImagePicker();
-  bool _loading = false;
-  bool _compressing = false;
+  bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.customer.name);
     _mobileCtrl = TextEditingController(text: widget.customer.mobileNumber);
-    _existing = List.from(widget.images);
   }
 
   @override
@@ -56,296 +43,238 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
     super.dispose();
   }
 
-  Future<void> _pickCamera() async {
-    final img = await _picker.pickImage(source: ImageSource.camera);
-    if (img == null) return;
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _compressing = true);
-    final compressed = await ImageCompressUtil.compressAndSave(img);
-    if (compressed != null) setState(() => _new.add(compressed));
-    setState(() => _compressing = false);
+    context.read<CustomerBloc>().add(
+      UpdateCustomer(
+        customerId: widget.customer.id!,
+        name: _nameCtrl.text.trim(),
+        mobileNumber: _mobileCtrl.text.trim(),
+      ),
+    );
   }
 
-  Future<void> _pickGallery() async {
-    final imgs = await _picker.pickMultiImage();
-    if (imgs.isEmpty) return;
+  @override
+  Widget build(BuildContext context) {
+    return BlocListener<CustomerBloc, CustomerState>(
+      listener: (context, state) {
+        if (state is CustomerUpdated) {
+          TbSnackbar.success(context, 'Client profile updated');
+          Navigator.pop(context, true);
+        } else if (state is CustomerError) {
+          setState(() => _isSaving = false);
+          TbSnackbar.error(context, state.message);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildSectionHeader('PERSONAL DETAILS'),
+                        const SizedBox(height: 16),
 
-    setState(() => _compressing = true);
-    final compressed = await ImageCompressUtil.compressAll(imgs);
-    if (compressed.isNotEmpty) setState(() => _new.addAll(compressed));
-    setState(() => _compressing = false);
-  }
+                        // Name Field
+                        _buildFieldLabel('NAME'),
+                        TextFormField(
+                          controller: _nameCtrl,
+                          textCapitalization: TextCapitalization.words,
+                          style: TextStyle(
+                            fontFamily: 'Satoshi',
+                            fontSize: 16,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                          decoration: _borderInputDecoration(
+                            hint: 'e.g. Ananya Sharma',
+                          ),
+                          validator: (v) => (v == null || v.trim().isEmpty)
+                              ? 'Name is required'
+                              : null,
+                        ),
+                        const SizedBox(height: 24),
 
-  void _removeExisting(int index) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Photo'),
-        content: const Text('Remove this photo permanently?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+                        // Phone Field
+                        _buildFieldLabel('PHONE'),
+                        TextFormField(
+                          controller: _mobileCtrl,
+                          keyboardType: TextInputType.phone,
+                          style: TextStyle(
+                            fontFamily: 'Satoshi',
+                            fontSize: 16,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                          decoration: _borderInputDecoration(
+                            hint: '+91 98765 43210',
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Phone is required';
+                            }
+                            if (v.replaceAll(RegExp(r'\D'), '').length < 10) {
+                              return 'Enter at least 10 digits';
+                            }
+                            return null;
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              _buildStickyFooter(),
+            ],
           ),
-          TextButton(
-            onPressed: () {
-              setState(() => _existing.removeAt(index));
-              Navigator.pop(ctx);
-            },
-            style: TextButton.styleFrom(foregroundColor: AppColors.error),
-            child: const Text('Delete'),
+        ),
+      ),
+    );
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(LucideIcons.chevron_left, size: 24),
+            color: Theme.of(context).colorScheme.onSurface,
+            onPressed: () => Navigator.pop(context),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Edit Client',
+              style: TextStyle(
+                fontFamily: 'Cormorant Garamond',
+                fontSize: 26,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
-
-    try {
-      final db = DatabaseHelper();
-
-      // Update customer info
-      await db.updateCustomer(widget.customer.id!, {
-        'name': _nameCtrl.text.trim(),
-        'mobile_number': _mobileCtrl.text.trim(),
-      });
-
-      // Delete removed images
-      final appDir =
-          await getApplicationDocumentsDirectory(); // get base dir once
-      final originalIds = widget.images.map((e) => e.id!).toSet();
-      final currentIds = _existing.map((e) => e.id!).toSet();
-      for (final id in originalIds.difference(currentIds)) {
-        final img = widget.images.firstWhere((e) => e.id == id);
-        await db.deleteImage(id);
-        final f = File(
-          p.join(appDir.path, img.imagePath),
-        ); // ← reconstruct absolute path
-        if (await f.exists()) await f.delete();
-      }
-
-      // Save new images
-      if (_new.isNotEmpty) {
-        final subPath = p.join(
-          'customer_images',
-          'customer_${widget.customer.id}',
-        );
-        final customerDir = Directory(p.join(appDir.path, subPath));
-
-        if (!await customerDir.exists()) {
-          await customerDir.create(recursive: true);
-        }
-        for (int i = 0; i < _new.length; i++) {
-          final name = 'image_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
-          final relativePath = p.join(
-            subPath,
-            name,
-          ); // ← relative: customer_images/customer_1/img.jpg
-          final absolutePath = p.join(
-            appDir.path,
-            relativePath,
-          ); // ← absolute: for actual file operation
-          await File(_new[i].path).copy(absolutePath);
-          await db.insertImage({
-            'customer_id': widget.customer.id,
-            'image_path': relativePath, // only relative path in DB
-            'image_type': 'general',
-            'created_at': DateTime.now().toIso8601String(),
-          });
-        }
-      }
-
-      if (mounted) {
-        TbSnackbar.success(context, "Client updated successfully");
-
-        Navigator.pop(context, true);
-      }
-    } catch (e) {
-      if (mounted) {
-        TbSnackbar.error(context, "Error: ${e.toString()}");
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+  Widget _buildSectionHeader(String title) {
+    return Text(
+      title,
+      style: TextStyle(
+        fontFamily: 'Satoshi',
+        fontSize: 11,
+        letterSpacing: 1.5,
+        fontWeight: FontWeight.bold,
+        color: Colors.grey.shade500,
+      ),
+    );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final totalImages = _existing.length + _new.length;
+  Widget _buildFieldLabel(String label) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4.0),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Satoshi',
+          fontSize: 10,
+          letterSpacing: 1.2,
+          fontWeight: FontWeight.w600,
+          color: Colors.grey.shade600,
+        ),
+      ),
+    );
+  }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'Edit Client',
-          style: AppTextStyles.headlineSm(color: AppColors.primary),
+  InputDecoration _borderInputDecoration({required String hint}) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(
+        fontFamily: 'Satoshi',
+        color: Colors.grey.shade600,
+        fontSize: 15,
+      ),
+      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+      enabledBorder: UnderlineInputBorder(
+        borderSide: BorderSide(color: Theme.of(context).colorScheme.outline),
+      ),
+      focusedBorder: const UnderlineInputBorder(
+        borderSide: BorderSide(color: AtelierTheme.brandPrimary, width: 1.5),
+      ),
+      errorBorder: const UnderlineInputBorder(
+        borderSide: BorderSide(color: AtelierTheme.darkError),
+      ),
+      focusedErrorBorder: const UnderlineInputBorder(
+        borderSide: BorderSide(color: AtelierTheme.darkError, width: 1.5),
+      ),
+    );
+  }
+
+  Widget _buildStickyFooter() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          top: BorderSide(
+            color: Theme.of(context).colorScheme.outline,
+            width: 0.5,
+          ),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, size: 18),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          _loading
-              ? const Padding(
-                  padding: EdgeInsets.all(14),
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primaryAccent,
-                    ),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: ElevatedButton.icon(
+          onPressed: _isSaving ? null : _save,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AtelierTheme.brandPrimary,
+            disabledBackgroundColor: AtelierTheme.brandPrimary.withOpacity(0.5),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(999),
+            ),
+            elevation: 0,
+          ),
+          icon: _isSaving
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Theme.of(context).brightness == Brightness.dark
+                        ? AtelierTheme.darkSurface
+                        : AtelierTheme.lightSurface,
                   ),
                 )
-              : TextButton(
-                  onPressed: _save,
-                  child: Text(
-                    'Save',
-                    style: AppTextStyles.bodyMd(
-                      color: AppColors.primaryAccent,
-                    ).copyWith(fontWeight: FontWeight.w600),
-                  ),
+              : Icon(
+                  LucideIcons.check,
+                  size: 18,
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? AtelierTheme.darkSurface
+                      : AtelierTheme.lightSurface,
                 ),
-        ],
-      ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
-          children: [
-            // ── Personal details ─────────────────────────────────────────────
-            const TbSectionHeader('Personal Details'),
-            const SizedBox(height: 10),
-            TbCard(
-              child: Column(
-                children: [
-                  TbInputField(
-                    label: 'Full Name',
-                    controller: _nameCtrl,
-                    prefixIcon: Icons.person_outline,
-                    validator: (v) => (v == null || v.trim().isEmpty)
-                        ? 'Name is required'
-                        : null,
-                  ),
-                  const SizedBox(height: 14),
-                  TbInputField(
-                    label: 'Phone Number',
-                    controller: _mobileCtrl,
-                    keyboardType: TextInputType.phone,
-                    prefixIcon: Icons.phone_outlined,
-                    validator: (v) {
-                      if (v == null || v.trim().isEmpty) {
-                        return 'Phone is required';
-                      }
-                      if (v.replaceAll(RegExp(r'\D'), '').length < 10) {
-                        return 'Enter at least 10 digits';
-                      }
-                      return null;
-                    },
-                  ),
-                ],
-              ),
+          label: Text(
+            _isSaving ? 'Updating…' : 'Save Changes',
+            style: TextStyle(
+              fontFamily: 'Satoshi',
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: AtelierTheme.lightSurface,
             ),
-
-            const SizedBox(height: 24),
-
-            // ── Photos ───────────────────────────────────────────────────────
-            TbSectionHeader(
-              'Reference Photos',
-              trailing: Text(
-                '$totalImages',
-                style: AppTextStyles.labelMd(color: AppColors.primaryAccent),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TbCard(
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _pickCamera,
-                          icon: const Icon(Icons.camera_alt_outlined, size: 16),
-                          label: const Text('Camera'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.primaryAccent,
-                            side: const BorderSide(
-                              color: AppColors.outlineVariant,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _pickGallery,
-                          icon: const Icon(
-                            Icons.photo_library_outlined,
-                            size: 16,
-                          ),
-                          label: const Text('Gallery'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.primaryAccent,
-                            side: const BorderSide(
-                              color: AppColors.outlineVariant,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_compressing) ...[
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.5,
-                            color: AppColors.primaryAccent,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Compressing images…',
-                          style: AppTextStyles.bodyMd(color: AppColors.muted),
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (totalImages > 0) ...[
-                    const SizedBox(height: 16),
-                    TbImageGrid(
-                      existingPaths: _existing.map((e) => e.imagePath).toList(),
-                      newPaths: _new.map((x) => x.path).toList(),
-                      onRemoveExisting: _removeExisting,
-                      onRemoveNew: (i) => setState(() => _new.removeAt(i)),
-                      onAddTap: _pickGallery,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 32),
-            TbButton(
-              label: 'Save Changes',
-              onPressed: (_compressing || _loading) ? null : _save,
-
-              isLoading: _loading,
-              icon: Icons.check_rounded,
-            ),
-          ],
+          ),
         ),
       ),
     );

@@ -8,7 +8,43 @@ class CustomerLoading extends CustomerState {}
 
 class CustomerLoaded extends CustomerState {
   final List<Customer> customers;
-  CustomerLoaded(this.customers);
+  final int totalCount;
+  final bool hasMore;
+  final bool isLoadingMore;
+  final String activeSearchQuery;
+
+  CustomerLoaded({
+    required this.customers,
+    required this.totalCount,
+    required this.hasMore,
+    this.isLoadingMore = false,
+    this.activeSearchQuery = '',
+  });
+
+  CustomerLoaded copyWith({
+    List<Customer>? customers,
+    int? totalCount,
+    bool? hasMore,
+    bool? isLoadingMore,
+    String? activeSearchQuery,
+  }) {
+    return CustomerLoaded(
+      customers: customers ?? this.customers,
+      totalCount: totalCount ?? this.totalCount,
+      hasMore: hasMore ?? this.hasMore,
+      isLoadingMore: isLoadingMore ?? this.isLoadingMore,
+      activeSearchQuery: activeSearchQuery ?? this.activeSearchQuery,
+    );
+  }
+
+  @override
+  List<Object?> get props => [
+    customers,
+    totalCount,
+    hasMore,
+    isLoadingMore,
+    activeSearchQuery,
+  ];
 }
 
 class CustomerError extends CustomerState {
@@ -18,7 +54,9 @@ class CustomerError extends CustomerState {
 
 class CustomerAdded extends CustomerState {
   final String message;
-  CustomerAdded(this.message);
+  final int customerId; // <--- Pass ID back to form for redirect
+
+  CustomerAdded(this.message, this.customerId);
 }
 
 class CustomerDeleted extends CustomerState {

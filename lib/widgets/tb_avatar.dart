@@ -1,6 +1,5 @@
+import 'package:atelier/core/theme/atelier_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:tailor_book/core/theme/app_colors.dart';
-import 'package:tailor_book/core/theme/app_txt_styles.dart';
 
 class TbAvatar extends StatelessWidget {
   const TbAvatar({super.key, required this.name, this.radius = 24});
@@ -27,8 +26,8 @@ class TbAvatar extends StatelessWidget {
       alignment: Alignment.center,
       child: Text(
         _initial,
-        style: AppTextStyles.headlineSm(
-          color: AppColors.onPrimary,
+        style: TextStyle(
+          color: AtelierTheme.brandPrimary,
         ).copyWith(fontSize: radius * 0.75, fontWeight: FontWeight.w700),
       ),
     );
